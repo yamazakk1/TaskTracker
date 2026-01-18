@@ -17,17 +17,26 @@ func WithTitle(title string) TaskOption {
 }
 
 func WithDescription(description string) TaskOption {
+	if description == ""{
+		return nil
+	}
 	return func(task *models.Task) {
 		task.Description = description
 	}
 }
 func WithStatus(status models.Status) TaskOption {
+	if status == ""{
+		return nil
+	}
 	return func(task *models.Task) {
 		task.Status = status
 	}
 }
 
 func WithDueTime(dueTime time.Time) TaskOption {
+	if dueTime.IsZero(){
+		return nil
+	}
 	return func(task *models.Task) {
 		task.DueTime = dueTime
 	}

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"taskTracker/internal/models"
 	"time"
+
 	"github.com/google/uuid"
 )
 
@@ -14,11 +15,10 @@ type UserStorage struct {
 	mtx     *sync.RWMutex
 }
 
-
-
 func NewUserStorage() *UserStorage {
 	return &UserStorage{
 		storage: make(map[uuid.UUID]*models.Task),
+		mtx:     &sync.RWMutex{},
 	}
 }
 
@@ -75,17 +75,17 @@ func (s *UserStorage) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 }
 
-func (s *UserStorage) GetWithLimit(ctx context.Context, limit int) ([]*models.Task,error){
-	if limit == 0{
+func (s *UserStorage) GetWithLimit(ctx context.Context, limit int) ([]*models.Task, error) {
+	if limit == 0 {
 		return nil, errors.New("limit не может быть 0")
 	}
 	number := 0
-	res := make([]*models.Task,limit)
-	for _, value := range s.storage{
-		if number == limit{
+	res := make([]*models.Task, limit)
+	for _, value := range s.storage {
+		if number == limit {
 			break
 		}
-		res[number] =value 
+		res[number] = value
 		number++
 	}
 	return res, nil
