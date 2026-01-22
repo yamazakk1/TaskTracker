@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"taskTracker/internal/service"
-
+	"time"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -26,10 +26,14 @@ func NewTaskHandler(taskService service.TaskService) TaskHandler {
 // PUT /tasks/{id} - обновление задачи по id СДЕЛАЛ
 // DELET /tasks/{id} - soft delete задачи
 
+// тут происходит валидация основных ошибок полученных данных
+
+
 func (s *TaskHandler) GetTasksWIthLimit(w http.ResponseWriter, r *http.Request) {
+
 	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
 	if err != nil {
-		responseWithError(w, http.StatusBadRequest, "неверное значение limit")
+		responseWithError(w, http.StatusBadRequest, "не удалось получить значение limit: " + err.Error() )
 		return
 	}
 
@@ -53,7 +57,7 @@ func (s *TaskHandler) PostTask(w http.ResponseWriter, r *http.Request) {
 
 	var request CreateTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		responseWithError(w, http.StatusBadRequest, "неверное тело запроса")
+		responseWithError(w, http.StatusBadRequest, "неверное тело запроса:" + err.Error())
 		return
 	}
 
@@ -64,6 +68,10 @@ func (s *TaskHandler) PostTask(w http.ResponseWriter, r *http.Request) {
 
 	if request.DueTime.IsZero() {
 		responseWithError(w, http.StatusBadRequest, "дедлайн должен быть задан")
+	}
+	
+	if time.Now().After(request.DueTime){
+		responseWithError(w,http.StatusBadRequest, "дедлайн не может быть в прошлом")
 	}
 
 	err := s.TaskService.CreateNewTask(r.Context(), request.Title, request.Description, request.DueTime)
@@ -80,10 +88,11 @@ func (s *TaskHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *TaskHandler) GetTaskByID(w http.ResponseWriter, r *http.Request) {
+
 	idParam := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idParam)
 	if err != nil {
-		responseWithError(w, http.StatusBadRequest, "неверный id")
+		responseWithError(w, http.StatusBadRequest, "не удалось получить id:" + err.Error())
 		return
 	}
 
@@ -109,7 +118,7 @@ func (s *TaskHandler) UpdateTaskByID(w http.ResponseWriter, r *http.Request) {
 	idParam := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idParam)
 	if err != nil {
-		responseWithError(w, http.StatusBadRequest, "неверный id")
+		responseWithError(w, http.StatusBadRequest, "не удалось получить id:" + err.Error())
 		return
 	}
 
@@ -125,7 +134,7 @@ func (s *TaskHandler) UpdateTaskByID(w http.ResponseWriter, r *http.Request) {
 
 	err = decoder.Decode(&request)
 	if err != nil {
-		responseWithError(w, http.StatusBadRequest, "неверно переданы параметры обновления")
+		responseWithError(w, http.StatusBadRequest, "неверно переданы параметры обновления:" + err.Error())
 		return
 	}
 
@@ -146,7 +155,7 @@ func (s *TaskHandler) DeleteTaskByID(w http.ResponseWriter, r *http.Request) {
 	idParam := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idParam)
 	if err != nil {
-		responseWithError(w, http.StatusBadRequest, "неверный id")
+		responseWithError(w, http.StatusBadRequest, "не удалось получить id" + err.Error())
 		return
 	}
 

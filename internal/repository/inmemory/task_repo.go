@@ -15,6 +15,8 @@ type UserStorage struct {
 	mtx     *sync.RWMutex
 }
 
+var ErrNotfound = errors.New("задача не найдена")
+
 func NewUserStorage() *UserStorage {
 	return &UserStorage{
 		storage: make(map[uuid.UUID]*models.Task),
@@ -44,13 +46,9 @@ func (s *UserStorage) GetByID(ctx context.Context, id uuid.UUID) (*models.Task, 
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
 
-	if id == uuid.Nil {
-		return nil, errors.New("id не может быть пустым")
-	}
-
 	task, ok := s.storage[id]
 	if !ok {
-		return nil, errors.New("нет задачи с таким id")
+		return nil, ErrNotfound
 	} else {
 		return task, nil
 	}
@@ -60,25 +58,20 @@ func (s *UserStorage) Delete(ctx context.Context, id uuid.UUID) error {
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
 
-	if id == uuid.Nil {
-		return errors.New("id не может быть пустым")
-	}
-
 	task, ok := s.storage[id]
 	if !ok {
-		return errors.New("нет задачи с таким id")
+		return ErrNotfound
 	} else {
 		now := time.Now()
 		task.UpdatedAt = &now
 		task.DeletedAt = &now
+		task.Status = models.StatusDeleted
 		return nil
 	}
 }
 
 func (s *UserStorage) GetWithLimit(ctx context.Context, limit int) ([]*models.Task, error) {
-	if limit == 0 {
-		return nil, errors.New("limit не может быть 0")
-	}
+
 	number := 0
 	res := make([]*models.Task, limit)
 	for _, value := range s.storage {

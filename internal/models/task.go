@@ -22,3 +22,4 @@ type Status string
 const StatusNew Status = "new"
 const StatusDone Status = "done"
 const StatusInProgress Status = "in progress"
+const StatusDeleted Status = "deleted"
