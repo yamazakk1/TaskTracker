@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"taskTracker/internal/handlers"
+	"taskTracker/internal/logger"
 	"taskTracker/internal/repository/inmemory"
 	"taskTracker/internal/service"
 
@@ -10,10 +11,11 @@ import (
 )
 
 func main() {
-	TaskRepo := inmemory.NewUserStorage()
+	TaskRepo := inmemory.NewTaskStorage()
 	TaskService := service.NewTaskService(TaskRepo)
 	TaskHandler := handlers.NewTaskHandler(TaskService)
-
+	logger.Init(true)
+	defer logger.Sync()
 	r := chi.NewRouter()
 	r.Route("/tasks", func(r chi.Router) {
 		r.Get("/", TaskHandler.GetTasksWIthLimit)
@@ -26,5 +28,6 @@ func main() {
 		})
 	})
 	r.Get("/health", TaskHandler.HealthCheck)
+	logger.Info("Server started")
 	http.ListenAndServe(":8080", r)
 }

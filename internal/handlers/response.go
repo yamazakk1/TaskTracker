@@ -16,3 +16,4 @@ func responseWithError(w http.ResponseWriter, code int, message string){
 func healthCheck(w http.ResponseWriter){
 	responseWithJSON(w, http.StatusOK,map[string]string{"status": "ok"})
 }
+

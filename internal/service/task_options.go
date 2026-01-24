@@ -17,7 +17,7 @@ func WithTitle(title string) TaskOption {
 }
 
 func WithDescription(description string) TaskOption {
-	if description == ""{
+	if description == "" {
 		return nil
 	}
 	return func(task *models.Task) {
@@ -25,7 +25,7 @@ func WithDescription(description string) TaskOption {
 	}
 }
 func WithStatus(status models.Status) TaskOption {
-	if status == ""{
+	if status == "" {
 		return nil
 	}
 	return func(task *models.Task) {
@@ -34,7 +34,10 @@ func WithStatus(status models.Status) TaskOption {
 }
 
 func WithDueTime(dueTime time.Time) TaskOption {
-	if dueTime.IsZero(){
+	if dueTime.IsZero() {
+		return nil
+	}
+	if time.Now().After(dueTime) {
 		return nil
 	}
 	return func(task *models.Task) {
