@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"taskTracker/internal/handlers"
 	"taskTracker/internal/logger"
-	"taskTracker/internal/repository/inmemory"
+	"taskTracker/internal/repository/task/inmemory"
 	"taskTracker/internal/service"
 
 	"github.com/go-chi/chi/v5"
@@ -13,7 +13,7 @@ import (
 func main() {
 	TaskRepo := inmemory.NewTaskStorage()
 	TaskService := service.NewTaskService(TaskRepo)
-	TaskHandler := handlers.NewTaskHandler(TaskService)
+	TaskHandler := handlers.NewTaskHandler(&TaskService)
 	logger.Init(true)
 	defer logger.Sync()
 	r := chi.NewRouter()

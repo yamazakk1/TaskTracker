@@ -5,7 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"taskTracker/internal/logger"
-	"taskTracker/internal/service"
+	"taskTracker/internal/models/task"
+	"taskTracker/internal/handlers/dto"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -14,10 +15,10 @@ import (
 )
 
 type TaskHandler struct {
-	TaskService service.TaskService
+	TaskService TaskService
 }
 
-func NewTaskHandler(taskService service.TaskService) TaskHandler {
+func NewTaskHandler(taskService TaskService) TaskHandler {
 	return TaskHandler{
 		TaskService: taskService,
 	}
@@ -49,7 +50,7 @@ func (s *TaskHandler) GetTasksWIthLimit(w http.ResponseWriter, r *http.Request) 
 
 	logger.Info("HTTP: Вызов сервиса для получения задач")
 
-	tasks, err := s.TaskService.GetTasksWIthLimit(r.Context(), limit)
+	tasks, err := s.TaskService.GetTasksWithLimit(r.Context(), limit)
 	if err != nil {
 		logger.Error("HTTP: Ошибка Service", err)
 		responseWithError(w, http.StatusInternalServerError, err.Error())
@@ -67,18 +68,9 @@ func (s *TaskHandler) PostTask(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	logger.HttpRequestInfo(r, "HTTP_IN:")
 
-	if r.Method != http.MethodPost {
 
-		logger.Warn("HTTP: Неверный метод",
-			zap.String("expected", "POST"),
-			zap.String("received", r.Method),
-			zap.String("client_ip", r.RemoteAddr))
 
-		responseWithError(w, http.StatusMethodNotAllowed, "разрешён только POST метод")
-		return
-	}
-
-	if r.Header.Get("Content-Type") != "application/json" {
+	if !checkContentType(r, "application/json"){
 
 		logger.Warn("HTTP: Неверный тип контента",
 			zap.String("expected", "application/json"),
@@ -89,7 +81,7 @@ func (s *TaskHandler) PostTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var request CreateTaskRequest
+	var request dto.CreateTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 
 		logger.Warn("HTTP: ошибка чтения JSON",
@@ -200,7 +192,7 @@ func (s *TaskHandler) GetTaskByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Info("HTTP_OUT: Задача получена",
-		zap.String("task_id", task.ID.String()),
+		zap.String("task_id", task.UUID.String()),
 		zap.Duration("ms", time.Since(start)),
 		zap.Int("http_status", http.StatusOK))
 
@@ -212,14 +204,14 @@ func (s *TaskHandler) UpdateTaskByID(w http.ResponseWriter, r *http.Request) {
 
 	logger.HttpRequestInfo(r, "HTTP_IN:")
 
-	if r.Method != http.MethodPut {
+	if !checkContentType(r, "application/json"){
 
-		logger.Warn("HTTP: Неверный метод",
-			zap.String("expected", "PUT"),
-			zap.String("received", r.Method),
+		logger.Warn("HTTP: Неверный тип контента",
+			zap.String("expected", "application/json"),
+			zap.String("received", r.Header.Get("Content-Type")),
 			zap.String("client_ip", r.RemoteAddr))
 
-		responseWithError(w, http.StatusMethodNotAllowed, "только PUT метод доступен")
+		responseWithError(w, http.StatusUnsupportedMediaType, "Content-Type должен быть application/json")
 		return
 	}
 
@@ -245,7 +237,7 @@ func (s *TaskHandler) UpdateTaskByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var request UpdateTaskRequest
+	var request dto.UpdateTaskRequest
 
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
@@ -263,7 +255,12 @@ func (s *TaskHandler) UpdateTaskByID(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("HTTP: запрос к сервису обновления данных")
 
-	err = s.TaskService.UpdateTaskByID(r.Context(), id, service.WithDescription(*request.Description), service.WithDueTime(*request.DueTime), service.WithStatus(*request.Status), service.WithTitle(*request.Title))
+	err = s.TaskService.UpdateTaskByID(r.Context(), id, 
+	task.WithDescription(*request.Description), 
+	task.WithDueTime(*request.DueTime),
+	task.WithStatus(*request.Status), 
+	task.WithTitle(*request.Title),
+	)
 	if err != nil {
 
 		logger.Error("HTTP: ошибка в Service", err,
@@ -286,16 +283,7 @@ func (s *TaskHandler) DeleteTaskByID(w http.ResponseWriter, r *http.Request) {
 
 	logger.HttpRequestInfo(r, "HTTP_IN:")
 
-	if r.Method != http.MethodDelete {
 
-		logger.Warn("HTTP: Неверный метод",
-			zap.String("expected", "DELETE"),
-			zap.String("received", r.Method),
-			zap.String("client_ip", r.RemoteAddr))
-
-		responseWithError(w, http.StatusMethodNotAllowed, "только DELETE метод доступен")
-		return
-	}
 
 	idParam := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idParam)
