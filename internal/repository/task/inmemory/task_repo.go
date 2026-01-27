@@ -6,38 +6,50 @@ import (
 	"taskTracker/internal/models/task"
 	repo "taskTracker/internal/repository"
 	"time"
-
+	"taskTracker/internal/logger"
 	"github.com/google/uuid"
 )
 
 type TaskStorage struct {
 	storage map[uuid.UUID]*task.Task
 	mtx     *sync.RWMutex
+	ids     []uuid.UUID
 }
 
 func NewTaskStorage() *TaskStorage {
 	return &TaskStorage{
 		storage: make(map[uuid.UUID]*task.Task),
 		mtx:     &sync.RWMutex{},
+		ids:     []uuid.UUID{},
 	}
 }
 
-func (s *TaskStorage) Create(ctx context.Context, task *task.Task) error {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	task.CreatedAt = time.Now()
-	s.storage[task.UUID] = task
+func (s *TaskStorage) HealthCheck(ctx context.Context) error {
+	logger.Info("Repository: Соединение стабильно")
 	return nil
 }
 
-func (s *TaskStorage) Update(ctx context.Context, task *task.Task) error {
+func (s *TaskStorage) Create(ctx context.Context, taskToCreate *task.Task) error {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	taskToCreate.CreatedAt = time.Now()
+	taskToCreate.Flag = task.FlagActive
+
+	s.storage[taskToCreate.UUID] = taskToCreate
+	s.ids = append(s.ids, taskToCreate.UUID)
+	return nil
+}
+
+func (s *TaskStorage) Update(ctx context.Context, taskToUpdate *task.Task) error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
 	now := time.Now()
-	task.UpdatedAt = &now
-	s.storage[task.UUID] = task
+	taskToUpdate.UpdatedAt = &now
+	taskToUpdate.Version++
+	s.storage[taskToUpdate.UUID] = taskToUpdate
+
 	return nil
 }
 
@@ -45,45 +57,142 @@ func (s *TaskStorage) GetByID(ctx context.Context, id uuid.UUID) (*task.Task, er
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
 
-	task, ok := s.storage[id]
+	taskToGet, ok := s.storage[id]
 	if !ok {
-		return nil, repo.ErrNotfound
-	} else {
-		return task, nil
+		return nil, repo.ErrNotFound
 	}
+	return taskToGet, nil
+
 }
 
-func (s *TaskStorage) Delete(ctx context.Context, task1 *task.Task) error {
+// мягкое удаление с изменением флага
+func (s *TaskStorage) DeleteSoft(ctx context.Context, taskToDelete *task.Task) error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	task1, ok := s.storage[task1.UUID]
+	taskExisted, ok := s.storage[taskToDelete.UUID]
 	if !ok {
-		return repo.ErrNotfound
-	} else {
-		now := time.Now()
-		task1.UpdatedAt = &now
-		task1.DeletedAt = &now
-		task1.Status = task.StatusDeleted
-
-		return nil
+		return repo.ErrNotFound
 	}
+
+	now := time.Now()
+	taskExisted.UpdatedAt = &now
+	taskExisted.DeletedAt = &now
+	taskExisted.Flag = task.FlagDeleted
+
+	return nil
+
 }
 
-func (s *TaskStorage) GetWithLimit(ctx context.Context, limit int) ([]*task.Task, error) {
+// полное удаление
+func (s *TaskStorage) DeleteFull(ctx context.Context, uuid uuid.UUID) error {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	delete(s.storage, uuid)
+	for ind, val := range s.ids {
+		if val == uuid {
+			s.ids = append(s.ids[:ind], s.ids[ind+1:]...)
+		}
+	}
+	return nil
+}
+
+// получение задач с флагами active или archived
+func (s *TaskStorage) GetAllWithLimit(ctx context.Context, page, limit int) ([]*task.Task, error) {
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
 
 	res := []*task.Task{}
+	offset := (page - 1) * limit
 
-	for _, task1 := range s.storage {
-		if task1.Status == task.StatusDeleted {
-			continue
-		}
+	for i := offset; i < len(s.ids); i++ {
 		if len(res) >= limit {
 			break
 		}
-		res = append(res, task1)
+
+		taskToGet := s.storage[s.ids[i]]
+		if taskToGet.Flag == task.FlagDeleted {
+			continue
+		}
+
+		res = append(res, taskToGet)
 	}
+
 	return res, nil
+}
+
+// получение задач с определённым флагом
+func (s *TaskStorage) GetFlaggedWithLimit(ctx context.Context, page, limit int, flag task.Flag) ([]*task.Task, error) {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
+	res := []*task.Task{}
+	offset := (page - 1) * limit
+
+	for i := offset; i < len(s.ids); i++ {
+		if len(res) >= limit {
+			break
+		}
+
+		taskToGet := s.storage[s.ids[i]]
+		if taskToGet.Flag != flag {
+			continue
+		}
+
+		res = append(res, taskToGet)
+	}
+
+	return res, nil
+}
+
+// получение задач с определённым статусом
+func (s *TaskStorage) GetStatusedWithLimit(ctx context.Context, page, limit int, status task.Status) ([]*task.Task, error) {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
+	offset := (page - 1) * limit
+	res := []*task.Task{}
+
+	for i := offset; i < len(s.ids); i++ {
+		if len(res) >= limit {
+			break
+		}
+
+		taskToGet := s.storage[s.ids[i]]
+		if taskToGet.Status != status {
+			continue
+		}
+
+		res = append(res, taskToGet)
+	}
+
+	return res, nil
+}
+
+func (s *TaskStorage) GetTasksDueBefore(ctx context.Context, deadline time.Time, limit int) ([]*task.Task, error) {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
+	var tasks []*task.Task
+	found := 0
+
+	for i := 0; i < len(s.ids); i++ {
+		if found >= limit {
+			break
+		}
+
+		t := s.storage[s.ids[i]]
+
+		if t.Flag == task.FlagActive &&
+			t.Status != task.StatusDone &&
+			t.Status != task.StatusOverdue &&
+			t.DueTime.Before(deadline) {
+
+			tasks = append(tasks, t)
+			found++
+		}
+	}
+
+	return tasks, nil
 }

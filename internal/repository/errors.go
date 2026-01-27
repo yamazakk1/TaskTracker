@@ -2,4 +2,5 @@ package repository
 
 import "errors"
 
-var ErrNotfound = errors.New("задача не найдена")
+var ErrNotFound = errors.New("задача не найдена")
+var ErrVersionConflict = errors.New("конфликт версий")

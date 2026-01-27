@@ -1,0 +1,19 @@
+server:
+  port: "8080"
+  host: "0.0.0.0"
+
+database:
+  url: "postgres://postgres:password@localhost:5432/tasktracker?sslmode=disable"
+  max_connections: 10
+  min_connections: 2
+  idle_timeout: "5m"
+
+logging:
+  development: true
+
+worker:
+  interval: "5m"
+  batch_size: 100
+
+repository:
+  type: "postgres"  # или "inmemory"

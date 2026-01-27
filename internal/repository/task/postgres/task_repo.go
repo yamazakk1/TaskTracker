@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"taskTracker/internal/logger"
 	"taskTracker/internal/models/task"
+	repo "taskTracker/internal/repository"
 	"time"
 
-
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -59,32 +60,59 @@ func (s *Storage) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-
-func (s *Storage) Delete(ctx context.Context, task *task.Task) error{
+// мягкое удаление задачи
+func (s *Storage) DeleteSoft(ctx context.Context, taskToDelete *task.Task) error {
 	start := time.Now()
 
 	query := `UPDATE tasks
 				SET deleted_at = NOW(),
-				status = $1,
+				flag = $1,
 				version = version + 1
-			WHERE uuid = $2 AND version = $3 AND deleted_at IS NULL
+			WHERE uuid = $2 AND version = $3 
 			RETURNING deleted_at, version`
 
-	err := s.pool.QueryRow(ctx, query, task.Status, task.UUID, task.Version).Scan(&task.DeletedAt, &task.Version)
+	err := s.pool.QueryRow(ctx, query, task.FlagDeleted, taskToDelete.UUID, taskToDelete.Version).Scan(&taskToDelete.DeletedAt, &taskToDelete.Version)
 
-	if err != nil{
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			logger.Warn("Конфликт версий при мягком удалении",
+				zap.String("task_id", taskToDelete.UUID.String()),
+				zap.Int("expected_version", taskToDelete.Version))
+			return repo.ErrVersionConflict
+		}
+
 		logger.Error("Repository: Мягкое удаление задачи", err, zap.Duration("ms", time.Since(start)))
 		return fmt.Errorf("мягкое удаление: %w", err)
 	}
 
-	
-	if time.Since(start) > time.Millisecond * 100{
+	if time.Since(start) > time.Millisecond*100 {
 		logger.Warn("Repository: Медленная операция", zap.Duration("ms", time.Since(start)))
 	}
-	return err 
+	return err
 }
 
-func (s *Storage) Update(ctx context.Context, task *task.Task) error {
+// полное удаление из БД
+func (s *Storage) DeleteFull(ctx context.Context, uuid uuid.UUID) error {
+	start := time.Now()
+
+	query := `DELETE FROM tasks
+				WHERE uuid = $1`
+
+	_, err := s.pool.Exec(ctx, query, uuid)
+
+	if err != nil {
+		logger.Error("Repositry: Полное уделание задачи", err, zap.Duration("ms", time.Since(start)))
+		return fmt.Errorf("полное удаление: %w", err)
+	}
+
+	if time.Since(start) > time.Millisecond*100 {
+		logger.Warn("Repository: Медленная операция", zap.Duration("ms", time.Since(start)))
+	}
+
+	return nil
+}
+
+func (s *Storage) Update(ctx context.Context, taskToUpdate *task.Task) error {
 	start := time.Now()
 
 	query := `UPDATE tasks
@@ -93,48 +121,55 @@ func (s *Storage) Update(ctx context.Context, task *task.Task) error {
 				status = $3,
 				due_time = $4,
 				version = version + 1,
-				updated_at = NOW()
-			WHERE uuid = $5 AND version = $6
+				updated_at = NOW(),
+				flag = $5
+			WHERE uuid = $6 AND version = $7
 			RETURNING updated_at, version`
 
 	err := s.pool.QueryRow(ctx, query,
-		task.Title,
-		task.Description,
-		task.Status,
-		task.DueTime,
-		task.UUID,
-		task.Version,
-	).Scan(&task.UpdatedAt, &task.Version)
-	
-	if err != nil{
+		taskToUpdate.Title,
+		taskToUpdate.Description,
+		taskToUpdate.Status,
+		taskToUpdate.DueTime,
+		taskToUpdate.Flag,
+		taskToUpdate.UUID,
+		taskToUpdate.Version,
+	).Scan(&taskToUpdate.UpdatedAt, &taskToUpdate.Version)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			logger.Warn("Конфликт версий при обновлении задачи",
+				zap.String("task_id", taskToUpdate.UUID.String()),
+				zap.Int("expected_version", taskToUpdate.Version))
+			return repo.ErrVersionConflict // Нужно добавить эту ошибку
+		}
 		logger.Error("Repository: Не удалось обновить задачу", err)
 		return fmt.Errorf("обновление задачи: %w", err)
 	}
 
-	if time.Since(start) > time.Millisecond * 100{
+	if time.Since(start) > time.Millisecond*100 {
 		logger.Warn("Repository: Медленная операция", zap.Duration("ms", time.Since(start)))
 	}
-	return err 
+	return err
 }
 
-func (s *Storage) Create(ctx context.Context, task *task.Task) error {
+func (s *Storage) Create(ctx context.Context, taskToCreate *task.Task) error {
 	start := time.Now()
 
-	task.CreatedAt = time.Now()
-
 	query := `INSERT INTO tasks
-				(uuid, title, description, status, due_time, created_at)
-				VALUES ($1, $2, $3, $4, $5, $6)
+				(uuid, title, description, status, due_time, created_at, flag)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)
 				RETURNING created_at`
 
 	err := s.pool.QueryRow(ctx, query,
-		task.UUID,
-		task.Title,
-		task.Description,
-		task.Status,
-		task.DueTime,
+		taskToCreate.UUID,
+		taskToCreate.Title,
+		taskToCreate.Description,
+		taskToCreate.Status,
+		taskToCreate.DueTime,
 		time.Now(),
-	).Scan(&task.CreatedAt)
+		task.FlagActive,
+	).Scan(&taskToCreate.CreatedAt)
 
 	if err != nil {
 		logger.Error("Repository: Не удалось добавить задачу", err, zap.Duration("ms", time.Since(start)))
@@ -159,22 +194,24 @@ func (s *Storage) GetByID(ctx context.Context, uuid uuid.UUID) (*task.Task, erro
 				created_at,
 				updated_at,
 				deleted_at,
-				version 
+				version,
+				flag 
 				FROM tasks
 				WHERE uuid = $1`
 
 	task := &task.Task{}
- 	err := s.pool.QueryRow(ctx, query, uuid).Scan(
-        &task.UUID,
-        &task.Title,
-        &task.Description,
-        &task.Status,
-        &task.DueTime,
-        &task.CreatedAt,
-        &task.UpdatedAt,
-        &task.DeletedAt,
-        &task.Version,
-    )
+	err := s.pool.QueryRow(ctx, query, uuid).Scan(
+		&task.UUID,
+		&task.Title,
+		&task.Description,
+		&task.Status,
+		&task.DueTime,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+		&task.DeletedAt,
+		&task.Version,
+		&task.Flag,
+	)
 
 	if err != nil {
 		logger.Error("Repository: Не удалось получить задачу", err, zap.Duration("ms", time.Since(start)))
@@ -188,9 +225,10 @@ func (s *Storage) GetByID(ctx context.Context, uuid uuid.UUID) (*task.Task, erro
 	return task, nil
 }
 
-func (s *Storage) GetWIthLimit(ctx context.Context, limit int) ([]*task.Task, error) {
+// все задачи с флагами active или archived
+func (s *Storage) GetAllWithLimit(ctx context.Context, page, limit int) ([]*task.Task, error) {
 	start := time.Now()
-
+	offset := (page - 1) * limit
 	query := `SELECT
 				uuid,
 				title,
@@ -200,11 +238,13 @@ func (s *Storage) GetWIthLimit(ctx context.Context, limit int) ([]*task.Task, er
 				created_at,
 				updated_at,
 				deleted_at,
-				version
+				version,
+				flag
 				FROM tasks
-				LIMIT $1`
+				WHERE flag != $1
+				LIMIT $2 OFFSET $3`
 
-	rows, err := s.pool.Query(ctx, query, limit)
+	rows, err := s.pool.Query(ctx, query, task.FlagDeleted, limit, offset)
 	if err != nil {
 		logger.Error("Repository: Не удалось получить задачи", err, zap.Duration("ms", time.Since(start)))
 		return nil, fmt.Errorf("получение задач: %w", err)
@@ -227,10 +267,13 @@ func (s *Storage) GetWIthLimit(ctx context.Context, limit int) ([]*task.Task, er
 			&task.UpdatedAt,
 			&task.DeletedAt,
 			&task.Version,
+			&task.Flag,
 		)
+
 		if err != nil {
 			logger.Warn("Repository: Ошибка сканирования задачи", zap.Error(err))
 		}
+
 		tasks = append(tasks, task)
 	}
 
@@ -245,4 +288,177 @@ func (s *Storage) GetWIthLimit(ctx context.Context, limit int) ([]*task.Task, er
 
 	return tasks, nil
 
+}
+
+// получение задач с определённым статусом
+func (s *Storage) GetStatusedWithLimit(ctx context.Context, page, limit int, status task.Status) ([]*task.Task, error) {
+	start := time.Now()
+
+	offset := (page - 1) * limit
+	query := `SELECT
+				uuid,
+				title,
+				description,
+				status,
+				due_time,
+				created_at,
+				updated_at,
+				deleted_at,
+				version,
+				flag
+				FROM tasks
+				WHERE STATUS = $1
+				LIMIT $2 OFFSET $3`
+
+	rows, err := s.pool.Query(ctx, query, status, limit, offset)
+	if err != nil {
+		logger.Error("Repository: Не удалось получить задачи", err, zap.Duration("ms", time.Since(start)))
+		return nil, fmt.Errorf("получение задач: %w", err)
+	}
+
+	defer rows.Close()
+
+	tasks := []*task.Task{}
+	for rows.Next() {
+		task := &task.Task{}
+
+		err := rows.Scan(
+			&task.UUID,
+			&task.Title,
+			&task.Description,
+			&task.Status,
+			&task.DueTime,
+			&task.CreatedAt,
+			&task.UpdatedAt,
+			&task.DeletedAt,
+			&task.Version,
+			&task.Flag,
+		)
+		if err != nil {
+			logger.Warn("Repository: Ошибка сканирования задачи", zap.Error(err))
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		logger.Error("Repository: Ошибка итерации по строкам", err)
+		return nil, fmt.Errorf("итерация по строкам: %w", err)
+	}
+
+	if time.Since(start) > time.Millisecond*50+time.Millisecond*10*time.Duration(limit) {
+		logger.Warn("Repository: Медленный запрос", zap.Duration("ms", time.Since(start)))
+	}
+
+	return tasks, nil
+}
+
+// получение задачи с определённым флагом
+func (s *Storage) GetFlaggedWithLimit(ctx context.Context, page, limit int, flag task.Flag) ([]*task.Task, error) {
+	start := time.Now()
+
+	offset := (page - 1) * limit
+	query := `SELECT
+				uuid,
+				title,
+				description,
+				status,
+				due_time,
+				created_at,
+				updated_at,
+				deleted_at,
+				version,
+				flag
+				FROM tasks
+				WHERE flag = $1
+				LIMIT $2 OFFSET $3`
+
+	rows, err := s.pool.Query(ctx, query, flag, limit, offset)
+	if err != nil {
+		logger.Error("Repository: Не удалось получить задачи", err, zap.Duration("ms", time.Since(start)))
+		return nil, fmt.Errorf("получение задач: %w", err)
+	}
+
+	defer rows.Close()
+
+	tasks := []*task.Task{}
+	for rows.Next() {
+		task := &task.Task{}
+
+		err := rows.Scan(
+			&task.UUID,
+			&task.Title,
+			&task.Description,
+			&task.Status,
+			&task.DueTime,
+			&task.CreatedAt,
+			&task.UpdatedAt,
+			&task.DeletedAt,
+			&task.Version,
+			&task.Flag,
+		)
+		if err != nil {
+			logger.Warn("Repository: Ошибка сканирования задачи", zap.Error(err))
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		logger.Error("Repository: Ошибка итерации по строкам", err)
+		return nil, fmt.Errorf("итерация по строкам: %w", err)
+	}
+
+	if time.Since(start) > time.Millisecond*50+time.Millisecond*10*time.Duration(limit) {
+		logger.Warn("Repository: Медленный запрос", zap.Duration("ms", time.Since(start)))
+	}
+
+	return tasks, nil
+}
+
+func (s *Storage) GetTasksDueBefore(ctx context.Context, deadline time.Time, limit int) ([]*task.Task, error){
+	start := time.Now()
+
+	query := `SELECT * FROM tasks 
+              WHERE flag = 'active' 
+                AND status NOT IN ('done', 'overdue')
+                AND due_time < $1
+              LIMIT $2`
+
+	rows, err := s.pool.Query(ctx, query, deadline, limit)
+	if err != nil{
+		logger.Error("Repository: Не удалось получить задачи", err, zap.Duration("ms", time.Since(start)))
+		return nil, fmt.Errorf("получение задач: %w", err)
+	}
+
+	tasks := []*task.Task{}
+	for rows.Next(){
+		task := &task.Task{}
+
+		err := rows.Scan(
+			&task.UUID,
+			&task.Title,
+			&task.Description,
+			&task.Status,
+			&task.DueTime,
+			&task.CreatedAt,
+			&task.UpdatedAt,
+			&task.DeletedAt,
+			&task.Version,
+			&task.Flag,
+		)
+
+		if err != nil{
+			logger.Warn("Repository: Ошибка сканирования задачи", zap.Error(err))
+		}
+
+		tasks = append(tasks, task)
+	}
+	
+	if err := rows.Err(); err != nil{
+		logger.Error("Repository: Ошибка итерации по строкам", err)
+		return nil, fmt.Errorf("итерация по строкам: %w", err)
+	}
+
+	if time.Since(start) > time.Millisecond*50+time.Millisecond*10*time.Duration(limit) {
+		logger.Warn("Repository: Медленный запрос", zap.Duration("ms", time.Since(start)))
+	}
+	
+	return tasks, nil
 }
