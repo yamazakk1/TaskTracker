@@ -13,19 +13,16 @@ import (
 )
 
 type TaskHandler struct {
-	TaskService TaskService
+	TaskService Service
 }
 
-func NewTaskHandler(taskService TaskService) TaskHandler {
+func NewTaskHandler(taskService Service) TaskHandler {
 	return TaskHandler{
 		TaskService: taskService,
 	}
 }
 
 func (s *TaskHandler) GetActiveTasks(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-    
     page, limit, ok := validatePagination(w, r)
     if !ok {
         return
@@ -42,11 +39,6 @@ func (s *TaskHandler) GetActiveTasks(w http.ResponseWriter, r *http.Request) {
         return
     }
     
-    logger.Info("HTTP_OUT: Активные задачи получены",
-        zap.Duration("ms", time.Since(start)),
-        zap.Int("count", len(tasks)),
-        zap.Int("http_status", http.StatusOK))
-    
     w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(dto.FromTaskList(tasks))
@@ -54,8 +46,6 @@ func (s *TaskHandler) GetActiveTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *TaskHandler) PostTask(w http.ResponseWriter, r *http.Request) {
     start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-
     if !checkContentType(r, "application/json") {
         logger.Warn("HTTP: Неверный тип контента",
             zap.String("expected", "application/json"),
@@ -74,31 +64,8 @@ func (s *TaskHandler) PostTask(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    
-    if request.Title == "" {
-        logger.Warn("HTTP: Ошибка валидации",
-            zap.String("field", "title"),
-            zap.String("error", "empty_field"),
-            zap.String("client_ip", r.RemoteAddr))
-        responseWithError(w, http.StatusBadRequest, "название не может быть пустым")
-        return
-    }
-
-    if request.DueTime.IsZero() {
-        logger.Warn("HTTP: Ошибка валидации",
-            zap.String("field", "due_time"),
-            zap.String("error", "empty_field"),
-            zap.String("client_ip", r.RemoteAddr))
-        responseWithError(w, http.StatusBadRequest, "дедлайн должен быть задан")
-        return
-    }
-
-    if time.Now().After(request.DueTime) {
-        logger.Warn("HTTP: Ошибка валидации",
-            zap.String("field", "due_time"),
-            zap.String("error", "wrong_value"),
-            zap.String("client_ip", r.RemoteAddr))
-        responseWithError(w, http.StatusBadRequest, "дедлайн не может быть в прошлом")
+    if msg, ok := validateCreateRequest(r,w,request); !ok{
+        responseWithError(w, http.StatusBadRequest, msg)
         return
     }
 
@@ -126,8 +93,6 @@ func (s *TaskHandler) PostTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *TaskHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
     start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP: Health check")
-    
     err := s.TaskService.HealthCheck(r.Context())
     
     if err != nil {
@@ -142,9 +107,7 @@ func (s *TaskHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
         )
         return
     }
-    
-    logger.Info("HTTP: Health check passed",
-        zap.Duration("ms", time.Since(start)))
+
     
     responseWithJSON(w, http.StatusOK, 
         toPayload("status",    "healthy"),
@@ -154,9 +117,6 @@ func (s *TaskHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *TaskHandler) GetTaskByID(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-
     id, ok := validateUUID(w, r, "id")
     if !ok {
         return
@@ -178,20 +138,12 @@ func (s *TaskHandler) GetTaskByID(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    logger.Info("HTTP_OUT: Задача получена",
-        zap.String("task_id", task.UUID.String()),
-        zap.Duration("ms", time.Since(start)),
-        zap.Int("http_status", http.StatusOK))
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(dto.FromTask(task))
 }
 
 func (s *TaskHandler) UpdateTaskByID(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-
     if !checkContentType(r, "application/json") {
         logger.Warn("HTTP: Неверный тип контента",
             zap.String("expected", "application/json"),
@@ -253,20 +205,12 @@ func (s *TaskHandler) UpdateTaskByID(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    logger.Info("HTTP_OUT: Задача обновлена",
-        zap.Duration("ms", time.Since(start)),
-        zap.String("task_id", id.String()),
-        zap.Int("http_status", http.StatusOK))
-
     w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(dto.FromTask(updatedTask))
 }
 
 func (s *TaskHandler) DeleteTaskByID(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-
     id, ok := validateUUID(w, r, "id")
     if !ok {
         return
@@ -288,18 +232,10 @@ func (s *TaskHandler) DeleteTaskByID(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    logger.Info("HTTP_OUT: Задача удалена",
-        zap.Duration("ms", time.Since(start)),
-        zap.String("task_id", id.String()),
-        zap.Int("http_status", http.StatusNoContent))
-
     w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *TaskHandler) GetArchivedTasks(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-    
     page, limit, ok := validatePagination(w, r)
     if !ok {
         return
@@ -316,20 +252,12 @@ func (s *TaskHandler) GetArchivedTasks(w http.ResponseWriter, r *http.Request) {
         return
     }
     
-    logger.Info("HTTP_OUT: Архивные задачи получены",
-        zap.Duration("ms", time.Since(start)),
-        zap.Int("count", len(tasks)),
-        zap.Int("http_status", http.StatusOK))
-    
     w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(dto.FromTaskList(tasks))
 }
 
 func (s *TaskHandler) GetAllTasks(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-    
     page, limit, ok := validatePagination(w, r)
     if !ok {
         return
@@ -346,21 +274,12 @@ func (s *TaskHandler) GetAllTasks(w http.ResponseWriter, r *http.Request) {
         return
     }
     
-    logger.Info("HTTP_OUT: Все задачи получены",
-        zap.Duration("ms", time.Since(start)),
-        zap.Int("count", len(tasks)),
-        zap.Int("http_status", http.StatusOK))
-    
     w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(dto.FromTaskList(tasks))
 }
 
 func (s *TaskHandler) GetOverdueTasks(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-    
-   
     page, limit, ok := validatePagination(w, r)
     if !ok {
         return
@@ -376,22 +295,13 @@ func (s *TaskHandler) GetOverdueTasks(w http.ResponseWriter, r *http.Request) {
         responseWithError(w, http.StatusInternalServerError, "внутренняя ошибка сервера")
         return
     }
-    
-    logger.Info("HTTP_OUT: Просроченные задачи получены",
-        zap.Duration("ms", time.Since(start)),
-        zap.Int("count", len(tasks)),
-        zap.Int("http_status", http.StatusOK))
-    
+  
     w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(dto.FromTaskList(tasks))
 }
 
 func (s *TaskHandler) GetDeletedTasks(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-    
-
     page, limit, ok := validatePagination(w, r)
     if !ok {
         return
@@ -408,21 +318,12 @@ func (s *TaskHandler) GetDeletedTasks(w http.ResponseWriter, r *http.Request) {
         return
     }
     
-    logger.Info("HTTP_OUT: Удаленные задачи получены",
-        zap.Duration("ms", time.Since(start)),
-        zap.Int("count", len(tasks)),
-        zap.Int("http_status", http.StatusOK))
-    
     w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(dto.FromTaskList(tasks))
 }
 
 func (s *TaskHandler) ArchiveTask(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-    
-    
     id, ok := validateUUID(w, r, "id")
     if !ok {
         return
@@ -461,21 +362,13 @@ func (s *TaskHandler) ArchiveTask(w http.ResponseWriter, r *http.Request) {
         responseWithError(w, http.StatusInternalServerError, "внутренняя ошибка сервера")
         return
     }
-    
-    logger.Info("HTTP_OUT: Задача архивирована",
-        zap.Duration("ms", time.Since(start)),
-        zap.String("task_id", id.String()),
-        zap.Int("http_status", http.StatusOK))
-    
+
    w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(dto.FromTask(archivedTask))
 }
 
 func (s *TaskHandler) UnarchiveTask(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-    
     id, ok := validateUUID(w, r, "id")
     if !ok {
         return
@@ -515,10 +408,6 @@ func (s *TaskHandler) UnarchiveTask(w http.ResponseWriter, r *http.Request) {
         return
     }
     
-    logger.Info("HTTP_OUT: Задача разархивирована",
-        zap.Duration("ms", time.Since(start)),
-        zap.String("task_id", id.String()),
-        zap.Int("http_status", http.StatusOK))
     
     w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -526,9 +415,6 @@ func (s *TaskHandler) UnarchiveTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *TaskHandler) RestoreTask(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
- 
     id, ok := validateUUID(w, r, "id")
     if !ok {
         return
@@ -575,28 +461,18 @@ func (s *TaskHandler) RestoreTask(w http.ResponseWriter, r *http.Request) {
         responseWithError(w, http.StatusInternalServerError, "внутренняя ошибка сервера")
         return
     }
-    
-    logger.Info("HTTP_OUT: Задача восстановлена",
-        zap.Duration("ms", time.Since(start)),
-        zap.String("task_id", id.String()),
-        zap.Int("http_status", http.StatusOK))
-    
+
     w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(dto.FromTask(restoredTask))
 }
 
 func (s *TaskHandler) PurgeTask(w http.ResponseWriter, r *http.Request) {
-    start := time.Now()
-    logger.HttpRequestInfo(r, "HTTP_IN:")
-    
     id, ok := validateUUID(w, r, "id")
     if !ok {
         return
     }
-    
-    logger.Info("HTTP: Запрос на полное удаление задачи",
-        zap.String("task_id", id.String()))
+
     
     err := s.TaskService.PurgeTask(r.Context(), id)
     if err != nil {
@@ -623,11 +499,6 @@ func (s *TaskHandler) PurgeTask(w http.ResponseWriter, r *http.Request) {
         responseWithError(w, http.StatusInternalServerError, "внутренняя ошибка сервера")
         return
     }
-    
-    logger.Info("HTTP_OUT: Задача полностью удалена",
-        zap.Duration("ms", time.Since(start)),
-        zap.String("task_id", id.String()),
-        zap.Int("http_status", http.StatusNoContent))
     
     w.WriteHeader(http.StatusNoContent)
 }

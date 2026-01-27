@@ -6,8 +6,11 @@ import (
     "strconv"
     "github.com/google/uuid"
     "taskTracker/internal/logger"
+    "taskTracker/internal/handlers/dto"
+    "time"
     "go.uber.org/zap"
 	"github.com/go-chi/chi/v5"
+
 )
 
 func checkContentType(r *http.Request, target string) bool {
@@ -87,4 +90,31 @@ func validateUUID(w http.ResponseWriter, r *http.Request, paramName string) (uui
     }
     
     return id, true
+}
+
+func validateCreateRequest(r *http.Request, w http.ResponseWriter,request dto.CreateTaskRequest) (string,bool){
+       if request.Title == "" {
+        logger.Warn("HTTP: Ошибка валидации",
+            zap.String("field", "title"),
+            zap.String("error", "empty_field"),
+            zap.String("client_ip", r.RemoteAddr))
+        return "название не может быть пустым",false
+    }
+
+    if request.DueTime.IsZero() {
+        logger.Warn("HTTP: Ошибка валидации",
+            zap.String("field", "due_time"),
+            zap.String("error", "empty_field"),
+            zap.String("client_ip", r.RemoteAddr))
+        return "дедлайн должен быть задан",false
+    }
+
+    if time.Now().After(request.DueTime) {
+        logger.Warn("HTTP: Ошибка валидации",
+            zap.String("field", "due_time"),
+            zap.String("error", "wrong_value"),
+            zap.String("client_ip", r.RemoteAddr))
+        return "дедлайн не может быть в прошлом",false
+    }
+    return "",true
 }

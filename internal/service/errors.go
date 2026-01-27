@@ -46,7 +46,7 @@ func NewNotFound(resource RepoType, id string) *BusinessError {
     return &BusinessError{
         Code:    "NOT_FOUND",
         Message: fmt.Sprintf("%s %s не найден(а)", resource, id),
-        Details: map[string]interface{}{
+        Details: map[string]any{
             "resource": resource,
             "id":       id,
         },
@@ -57,7 +57,7 @@ func NewValidationError(field, reason string) *BusinessError {
     return &BusinessError{
         Code:    "VALIDATION_ERROR",
         Message: fmt.Sprintf("Неверное значение поля '%s': %s", field, reason),
-        Details: map[string]interface{}{
+        Details: map[string]any{
             "field":  field,
             "reason": reason,
         },

@@ -5,7 +5,7 @@ import "github.com/google/uuid"
 import "time"
 import "taskTracker/internal/models/task"
 
-type TaskService interface {
+type Service interface {
     CreateTask(context.Context, string, string, time.Time) (*task.Task, error)
     GetActiveTasks(context.Context, int, int) ([]*task.Task, error)
     GetAllTasks(context.Context, int, int) ([]*task.Task, error)

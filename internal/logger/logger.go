@@ -37,7 +37,12 @@ func Info(msg string, fields ...zap.Field) {
 	Logger.Info(msg, fields...)
 }
 
+func Log(lvl zapcore.Level, msg string, fields ...zap.Field){
+	Logger.Log(lvl, msg, fields...)
+}
+
 func HttpRequestInfo(r *http.Request, msg string, fields ...zap.Field) {
+	
 	allFields := []zap.Field{
 		zap.String("method", r.Method),
 		zap.String("path", r.URL.Path),

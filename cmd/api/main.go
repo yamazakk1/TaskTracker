@@ -4,8 +4,10 @@ import (
 	"net/http"
 	"taskTracker/internal/handlers"
 	"taskTracker/internal/logger"
+	"taskTracker/internal/middleware"
 	"taskTracker/internal/repository/task/inmemory"
 	"taskTracker/internal/service"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -14,9 +16,15 @@ func main() {
 	TaskRepo := inmemory.NewTaskStorage()
 	TaskService := service.NewTaskService(TaskRepo, service.InMemoryType)
 	TaskHandler := handlers.NewTaskHandler(&TaskService)
-	logger.Init(false)
+	logger.Init(true)
 	defer logger.Sync()
 	r := chi.NewRouter()
+
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Logging)
+	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(middleware.RateLimit(100))
+	
 	r.Route("/tasks", func(r chi.Router) {
 
 		r.Get("/", TaskHandler.GetActiveTasks) // GET /tasks
