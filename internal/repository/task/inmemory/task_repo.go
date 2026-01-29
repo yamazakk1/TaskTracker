@@ -3,10 +3,11 @@ package inmemory
 import (
 	"context"
 	"sync"
+	"taskTracker/internal/logger"
 	"taskTracker/internal/models/task"
 	repo "taskTracker/internal/repository"
 	"time"
-	"taskTracker/internal/logger"
+
 	"github.com/google/uuid"
 )
 

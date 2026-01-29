@@ -11,9 +11,5 @@ database:
 logging:
   development: true
 
-worker:
-  interval: "5m"
-  batch_size: 100
-
 repository:
   type: "postgres"  # или "inmemory"

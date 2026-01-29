@@ -13,7 +13,6 @@ type Config struct {
     Server     ServerConfig     `yaml:"server"`
     Database   DatabaseConfig   `yaml:"database"`
     Logging    LoggingConfig    `yaml:"logging"`
-    Worker     WorkerConfig     `yaml:"worker"`
     Repository RepositoryConfig `yaml:"repository"`
 }
 
@@ -33,10 +32,6 @@ type LoggingConfig struct {
     Development bool `yaml:"development"`
 }
 
-type WorkerConfig struct {
-    Interval  time.Duration `yaml:"interval"`
-    BatchSize int           `yaml:"batch_size"`
-}
 
 type RepositoryConfig struct {
     Type string `yaml:"type"` // "postgres" или "inmemory"

@@ -107,55 +107,55 @@ func GetRequestID(ctx context.Context) string {
 	return ""
 }
 
-func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestId := GetRequestID(r.Context())
+// func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
+// 	return func(next http.Handler) http.Handler {
+// 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// 			requestId := GetRequestID(r.Context())
 
-			ctx, cancel := context.WithTimeout(r.Context(), timeout)
-			defer cancel()
+// 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+// 			defer cancel()
 
-			r = r.WithContext(ctx)
+// 			r = r.WithContext(ctx)
 
-			done := make(chan struct{}, 1)
+// 			done := make(chan struct{}, 1)
 
-			go func() {
-				next.ServeHTTP(w, r)
-				close(done)
-			}()
+// 			go func() {
+// 				next.ServeHTTP(w, r)
+// 				close(done)
+// 			}()
 
-			select {
-			case <-done:
-				return
-			case <-ctx.Done():
-				if ctx.Err() == context.DeadlineExceeded {
-					logger.Warn(
-						"HTTP: таймаут запроса",
-						zap.String("request_id", requestId),
-						zap.String("method", r.Method),
-						zap.String("path", r.URL.Path),
-						zap.String("client_ip", r.RemoteAddr),
-						zap.Duration("ms", timeout),
-					)
-					w.WriteHeader(http.StatusGatewayTimeout)
-					w.Header().Set("Content-Type", "application/json")
+// 			select {
+// 			case <-done:
+// 				return
+// 			case <-ctx.Done():
+// 				if ctx.Err() == context.DeadlineExceeded {
+// 					logger.Warn(
+// 						"HTTP: таймаут запроса",
+// 						zap.String("request_id", requestId),
+// 						zap.String("method", r.Method),
+// 						zap.String("path", r.URL.Path),
+// 						zap.String("client_ip", r.RemoteAddr),
+// 						zap.Duration("ms", timeout),
+// 					)
+// 					w.WriteHeader(http.StatusGatewayTimeout)
+// 					w.Header().Set("Content-Type", "application/json")
 
-					w.Write([]byte(`{
-                        "error": "request timeout",
-                        "request_id": "` + requestId + `",
-                        "message": "the request took too long to process"
-                    }`))
+// 					w.Write([]byte(`{
+//                         "error": "request timeout",
+//                         "request_id": "` + requestId + `",
+//                         "message": "the request took too long to process"
+//                     }`))
 
-					if hijacker, ok := w.(http.Hijacker); ok {
-						if conn, _, err := hijacker.Hijack(); err == nil {
-							conn.Close()
-						}
-					}
-				}
-			}
-		})
-	}
-}
+// 					if hijacker, ok := w.(http.Hijacker); ok {
+// 						if conn, _, err := hijacker.Hijack(); err == nil {
+// 							conn.Close()
+// 						}
+// 					}
+// 				}
+// 			}
+// 		})
+// 	}
+// }
 
 type clientInfo struct {
 	count   int
@@ -165,7 +165,6 @@ type clientInfo struct {
 func RateLimit(rpm int) func(http.Handler) http.Handler {
 	clients := make(map[string]*clientInfo)
 	var mtx sync.Mutex
-
 	window := time.Minute
 
 	return func(next http.Handler) http.Handler {
@@ -174,25 +173,26 @@ func RateLimit(rpm int) func(http.Handler) http.Handler {
 			now := time.Now()
 
 			mtx.Lock()
-			info, ok := clients[ip]
-			if !ok {
 
-				info := &clientInfo{
+			// Всегда работаем с одной переменной info
+			info, exists := clients[ip]
+
+			if !exists {
+				// Создаем новую запись
+				info = &clientInfo{
 					count:   1,
 					resetAt: now.Add(window),
 				}
 				clients[ip] = info
-				mtx.Unlock()
 			} else if now.After(info.resetAt) {
-
+				// Сброс счетчика
 				info.count = 1
 				info.resetAt = now.Add(window)
-				mtx.Unlock()
-
 			} else {
-
+				// Проверяем лимит
 				if info.count >= rpm {
-					mtx.Unlock()
+					mtx.Unlock() // разблокируем перед возвратом
+
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusTooManyRequests)
 
@@ -205,22 +205,28 @@ func RateLimit(rpm int) func(http.Handler) http.Handler {
 					return
 				}
 
+				// Увеличиваем счетчик
 				info.count++
-				mtx.Unlock()
 			}
 
+			// Сохраняем значения ДО разблокировки
 			remaining := rpm - info.count
+			resetUnix := info.resetAt.Unix()
+
+			mtx.Unlock() // разблокируем здесь
+
+			// Устанавливаем заголовки
 			if remaining < 0 {
 				remaining = 0
 			}
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rpm))
 			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
-			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(info.resetAt.Unix(), 10))
+			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetUnix, 10))
 
+			// Вызываем следующий handler
 			next.ServeHTTP(w, r)
 		})
 	}
-
 }
 
 func getIp(r *http.Request) string {
