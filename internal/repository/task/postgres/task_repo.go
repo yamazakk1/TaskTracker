@@ -7,7 +7,7 @@ import (
 	"taskTracker/internal/models/task"
 	repo "taskTracker/internal/repository"
 	"time"
-
+	"os"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -461,4 +461,69 @@ func (s *Storage) GetTasksDueBefore(ctx context.Context, deadline time.Time, lim
 	}
 	
 	return tasks, nil
+}
+
+
+func (s *Storage)Migrate(ctx context.Context) error {
+	logger.Info("Попытка миграций")
+	
+	initUp, err := os.ReadFile("internal/migrations/001_init.up.sql")
+	if err != nil {
+		logger.Error("failed to read 001_init.up.sql", err)
+		return err
+	}
+	
+	indexesUp, err := os.ReadFile("internal/migrations/002_indexes.up.sql")
+	if err != nil {
+		
+		logger.Error("failed to read 002_indexes.up.sql", err)
+		return err
+	}
+	
+		_, err = s.pool.Exec(ctx,string(initUp))
+	if err != nil {
+		logger.Error("failed to apply 001_init", err)
+		return err 
+	}
+	
+	_, err = s.pool.Exec(ctx,string(indexesUp))
+	if err != nil {
+		logger.Error("failed to apply 002_indexes", err)
+		return err
+	}
+	
+	logger.Info("Христа ради миграции заработали")
+	return nil
+}
+
+
+func (s *Storage )Down(ctx context.Context) error {
+	logger.Info("Откат миграций")
+
+	indexesDown, err :=	os.ReadFile("internal/migrations/002_indexes.down.sql")
+	if err != nil {
+		logger.Error("failed to read 002_indexes.down.sql", err)
+		return err
+	}
+	
+	initDown, err := os.ReadFile("internal/migrations/001_init.down.sql")
+	if err != nil {
+		logger.Error("failed to read 001_init.down.sql", err)
+		return err
+	}
+	
+	_, err = s.pool.Exec(ctx, string(indexesDown))
+	if err != nil {
+		logger.Error("failed to rollback 002_indexes", err)
+		return  err
+	}
+	
+	_, err = s.pool.Exec(ctx, string(initDown))
+	if err != nil {
+		logger.Error("failed to rollback 001_init", err)
+		return err
+	}
+	
+	logger.Info("Migrations rolled back successfully!")
+	return nil
 }

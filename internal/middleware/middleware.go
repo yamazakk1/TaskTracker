@@ -107,55 +107,55 @@ func GetRequestID(ctx context.Context) string {
 	return ""
 }
 
-// func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
-// 	return func(next http.Handler) http.Handler {
-// 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-// 			requestId := GetRequestID(r.Context())
+func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestId := GetRequestID(r.Context())
 
-// 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
-// 			defer cancel()
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
 
-// 			r = r.WithContext(ctx)
+			r = r.WithContext(ctx)
 
-// 			done := make(chan struct{}, 1)
+			done := make(chan struct{}, 1)
 
-// 			go func() {
-// 				next.ServeHTTP(w, r)
-// 				close(done)
-// 			}()
+			go func() {
+				next.ServeHTTP(w, r)
+				close(done)
+			}()
 
-// 			select {
-// 			case <-done:
-// 				return
-// 			case <-ctx.Done():
-// 				if ctx.Err() == context.DeadlineExceeded {
-// 					logger.Warn(
-// 						"HTTP: таймаут запроса",
-// 						zap.String("request_id", requestId),
-// 						zap.String("method", r.Method),
-// 						zap.String("path", r.URL.Path),
-// 						zap.String("client_ip", r.RemoteAddr),
-// 						zap.Duration("ms", timeout),
-// 					)
-// 					w.WriteHeader(http.StatusGatewayTimeout)
-// 					w.Header().Set("Content-Type", "application/json")
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				if ctx.Err() == context.DeadlineExceeded {
+					logger.Warn(
+						"HTTP: таймаут запроса",
+						zap.String("request_id", requestId),
+						zap.String("method", r.Method),
+						zap.String("path", r.URL.Path),
+						zap.String("client_ip", r.RemoteAddr),
+						zap.Duration("ms", timeout),
+					)
+					w.WriteHeader(http.StatusGatewayTimeout)
+					w.Header().Set("Content-Type", "application/json")
 
-// 					w.Write([]byte(`{
-//                         "error": "request timeout",
-//                         "request_id": "` + requestId + `",
-//                         "message": "the request took too long to process"
-//                     }`))
+					w.Write([]byte(`{
+                        "error": "request timeout",
+                        "request_id": "` + requestId + `",
+                        "message": "the request took too long to process"
+                    }`))
 
-// 					if hijacker, ok := w.(http.Hijacker); ok {
-// 						if conn, _, err := hijacker.Hijack(); err == nil {
-// 							conn.Close()
-// 						}
-// 					}
-// 				}
-// 			}
-// 		})
-// 	}
-// }
+					if hijacker, ok := w.(http.Hijacker); ok {
+						if conn, _, err := hijacker.Hijack(); err == nil {
+							conn.Close()
+						}
+					}
+				}
+			}
+		})
+	}
+}
 
 type clientInfo struct {
 	count   int

@@ -1,39 +1,39 @@
-// cmd/test/main.go
 package main
 
 import (
-	"context"
-	"fmt"
-	"taskTracker/internal/app"
-	"taskTracker/internal/config"
+    "context"
+    "log"
+    "taskTracker/internal/app"
+    "taskTracker/internal/config"
 )
 
 func main() {
-	// Тестовый конфиг
-	cfg := &config.Config{
-		Server: config.ServerConfig{
-			Host: "localhost",
-			Port: "8080",
-		},
-		Logging: config.LoggingConfig{
-			Development: true,
-		},
-		Repository: config.RepositoryConfig{
-			Type: "inmemory", // для быстрого теста
-		},
-	}
+    // Загружаем конфигурацию (теперь всегда работает)
+    cfg, err := config.Load()
+    if err != nil {
+        // Если ошибка - создаем дефолтный конфиг
+        log.Printf("Warning: config error: %v, using defaults", err)
+        cfg = config.LoadFromEnv()
+    }
 
-	app := app.New(cfg)
-	ctx := context.Background()
+    // Создаем приложение
+    application := app.New(cfg)
+    
+    // Создаем корневой контекст
+    ctx := context.Background()
+    
+    // Инициализируем все компоненты
+    if err := application.Init(ctx); err != nil {
+        log.Fatalf("Failed to init app: %v", err)
+    }
 
-	fmt.Println("🔄 Инициализация приложения...")
-	if err := app.Init(ctx); err != nil {
-		fmt.Printf("❌ Ошибка: %v\n", err)
-		return
-	}
+    log.Println("Application initialized")
+    log.Println("Server starting on:", cfg.GetServerAddr())
+    
+    // Запускаем приложение
+    if err := application.Run(ctx); err != nil {
+        log.Fatalf("Application error: %v", err)
+    }
 
-	fmt.Println("✅ Приложение успешно инициализировано!")
-	fmt.Println("   Тип сервиса:", cfg.Repository.Type)
-
-	app.Run(ctx)
+    log.Println("Application stopped")
 }

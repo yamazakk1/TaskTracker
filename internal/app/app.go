@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 )
 
@@ -26,7 +27,7 @@ type App struct {
 	router     *chi.Mux
 	repository service.TaskRepository //
 	service    handlers.Service       //
-	shutdowns  []func() //
+	shutdowns  []func()               //
 }
 
 func New(cfg *config.Config) *App {
@@ -63,6 +64,12 @@ func (a *App) Init(ctx context.Context) error {
 	a.repository = repo
 	logger.Info("Успешная инициализация репозитория", zap.String("type", a.config.Repository.Type))
 
+	// if a.config.Repository.Type == "postgres" {
+	// 	if err := a.runMigrations(); err != nil {
+	// 		return fmt.Errorf("миграции: %w", err)
+	// 	}
+	// }
+
 	// сервис
 	servi, err := a.initService()
 	if err != nil {
@@ -79,13 +86,11 @@ func (a *App) Init(ctx context.Context) error {
 	a.initServer()
 	logger.Info("Успешная инициализация сервера")
 
-
 	logger.Info("Приложение успешно инициализировано")
 	return nil
 }
 
 func (a *App) Run(ctx context.Context) error {
-
 
 	serverErr := make(chan error, 1)
 
@@ -126,27 +131,120 @@ func (a *App) Shutdown(ctx context.Context) error {
 }
 
 func (a *App) initRepository(ctx context.Context) (service.TaskRepository, error) {
-	logger.Info("Попытка инициализация репозитория", zap.String("type", a.config.Repository.Type))
+	logger.Info("Попытка инициализации репозитория", zap.String("type", a.config.Repository.Type))
 
 	switch a.config.Repository.Type {
 	case "postgres":
+		// 1. Подключаемся к БД
+		conn, err := pgx.Connect(ctx, a.config.Database.URL)
+		if err != nil {
+			return nil, fmt.Errorf("подключение к БД: %w", err)
+		}
+
+		// 2. ВСЕ МИГРАЦИИ ЗДЕСЬ - ПРОСТО ВЫПОЛНЯЕМ SQL
+		logger.Info("Применение миграций...")
+
+		// Создаем таблицу
+		_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS tasks (
+				uuid        UUID PRIMARY KEY,
+				title       TEXT NOT NULL,
+				description TEXT,
+				status      VARCHAR(20) NOT NULL,
+				due_time    TIMESTAMPTZ NOT NULL,
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at  TIMESTAMPTZ,
+				deleted_at  TIMESTAMPTZ,
+				version     INTEGER NOT NULL DEFAULT 1,
+				flag        VARCHAR(20) NOT NULL DEFAULT 'active'
+			)
+		`)
+		if err != nil {
+			conn.Close(ctx)
+			return nil, fmt.Errorf("создание таблицы tasks: %w", err)
+		}
+
+		// Создаем индексы
+		indexes := []string{
+			`CREATE INDEX IF NOT EXISTS idx_tasks_flag ON tasks(flag)`,
+			`CREATE INDEX IF NOT EXISTS idx_tasks_active_created ON tasks(created_at DESC) WHERE flag = 'active'`,
+			`CREATE INDEX IF NOT EXISTS idx_tasks_overdue ON tasks(due_time, status) WHERE flag = 'active' AND status IN ('new', 'in progress')`,
+			`CREATE INDEX IF NOT EXISTS idx_tasks_archived_created ON tasks(created_at DESC) WHERE flag = 'archived'`,
+			`CREATE INDEX IF NOT EXISTS idx_tasks_deleted_created ON tasks(created_at DESC) WHERE flag = 'deleted'`,
+		}
+
+		for i, idx := range indexes {
+			_, err = conn.Exec(ctx, idx)
+			if err != nil {
+				conn.Close(ctx)
+				return nil, fmt.Errorf("создание индекса %d: %w", i+1, err)
+			}
+		}
+
+		logger.Info("Миграции успешно применены")
+
+		// 3. Закрываем временное соединение
+		conn.Close(ctx)
+
+		// 4. Создаем репозиторий для работы приложения
 		repo, err := postgres.New(ctx, a.config.Database.URL)
 		if err != nil {
 			return nil, err
 		}
 
+		// 5. Добавляем в shutdowns откат миграций при завершении
+		a.shutdowns = append(a.shutdowns, func() {
+			logger.Info("Откат миграций при завершении...")
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			conn, err := pgx.Connect(ctx, a.config.Database.URL)
+			if err != nil {
+				logger.Error("Ошибка подключения для отката", err)
+				return
+			}
+			defer conn.Close(ctx)
+
+			// УДАЛЯЕМ ИНДЕКСЫ
+			dropIndexes := []string{
+				`DROP INDEX IF EXISTS idx_tasks_deleted_created`,
+				`DROP INDEX IF EXISTS idx_tasks_archived_created`,
+				`DROP INDEX IF EXISTS idx_tasks_overdue`,
+				`DROP INDEX IF EXISTS idx_tasks_active_created`,
+				`DROP INDEX IF EXISTS idx_tasks_flag`,
+			}
+
+			for _, dropIdx := range dropIndexes {
+				_, err := conn.Exec(ctx, dropIdx)
+				if err != nil {
+					logger.Error(fmt.Sprintf("Ошибка удаления индекса: %s", dropIdx), err)
+				}
+			}
+
+			// УДАЛЯЕМ ТАБЛИЦУ
+			_, err = conn.Exec(ctx, `DROP TABLE IF EXISTS tasks`)
+			if err != nil {
+				logger.Error("Ошибка удаления таблицы tasks", err)
+			} else {
+				logger.Info("Миграции успешно откачены")
+			}
+		})
+
 		a.shutdowns = append(a.shutdowns, func() {
 			logger.Info("Завершение работы БД...")
 			repo.Close()
 		})
+
 		return repo, nil
+
 	case "inmemory":
 		repo := inmemory.NewTaskStorage()
 		return repo, nil
+
 	default:
 		return nil, fmt.Errorf("неизвестный тип репозитория: %s", a.config.Repository.Type)
 	}
-
 }
 
 func (a *App) initService() (handlers.Service, error) {
@@ -227,4 +325,3 @@ func (a *App) initServer() {
 		})
 
 }
-
