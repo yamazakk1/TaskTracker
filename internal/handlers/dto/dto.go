@@ -21,7 +21,7 @@ type UpdateTaskRequest struct {
 }
 
 type TaskResponse struct {
-	ID          uuid.UUID  `json:"id"`
+	UUID          uuid.UUID  `json:"id"`
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
 	Status      string     `json:"status"`
@@ -33,7 +33,7 @@ type TaskResponse struct {
 
 func FromTask(t *task.Task) TaskResponse {
 	return TaskResponse{
-		ID:          t.UUID,
+		UUID:          t.UUID,
 		Title:       t.Title,
 		Description: t.Description,
 		Status:      string(t.Status),
